@@ -1,10 +1,17 @@
+from typing import List, Union, Type, Optional
+
 import pytest
+import jwt
+
+from pydantic import ValidationError
+from starlette.datastructures import Secret
 
 from httpx import AsyncClient
 from fastapi import FastAPI
 
 from databases import Database
 from app.db.repositories.users import UsersRepository
+from app.services import auth_service
 
 from starlette.status import (
     HTTP_200_OK,
@@ -17,6 +24,9 @@ from starlette.status import (
 
 from app.models.user import UserCreate, UserInDB
 
+from app.core.config import SECRET_KEY, JWT_ALGORITHM, JWT_AUDIENCE, JWT_TOKEN_PREFIX, ACCESS_TOKEN_EXPIRE_MINUTES
+from app.models.token import JWTMeta, JWTCreds, JWTPayload
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -26,7 +36,7 @@ class TestUserRoutes:
         new_user = {
             "email": "test@email.io",
             "username": "test_username",
-            "password": "testpassword"
+            "password": "testpassword",
         }
         res = await client.post(app.url_path_for("users:register-new-user"),
                                 json={"new_user": new_user})
@@ -44,7 +54,7 @@ class TestUserRegistration:
         new_user = {
             "email": "shakira@shakira.io",
             "username": "shakirashakira",
-            "password": "chantaje"
+            "password": "chantaje",
         }
         # make sure user doesn't exist yet
         user_in_db = await user_repo.get_user_by_email(email=new_user["email"])
@@ -59,9 +69,16 @@ class TestUserRegistration:
         assert user_in_db.email == new_user["email"]
         assert user_in_db.username == new_user["username"]
         # check that the user returned in the response is equal to the user in the database
-        created_user = UserInDB(**res.json(), password="whatever",
-                                salt="123").dict(exclude={"password", "salt"})
-        assert created_user == user_in_db.dict(exclude={"password", "salt"})
+        returned_user = UserInDB(
+            **res.json(),
+            password=
+            "password_not_returned_from_db_for_security_reasons_yet_necessary_here",
+            salt=
+            "salt_not_returned_from_db_for_security_reasons_yet_necessary_here",
+        ).dict(exclude={"password", "salt"})
+
+        stored_user = user_in_db.dict(exclude={"password", "salt"})
+        assert returned_user == stored_user
 
     @pytest.mark.parametrize("attr, value, status_code", (
         ("email", "shakira@shakira.io", 400),
@@ -89,3 +106,68 @@ class TestUserRegistration:
         res = await client.post(app.url_path_for("users:register-new-user"),
                                 json={"new_user": new_user})
         assert res.status_code == status_code
+
+
+class TestAuthTokens:
+    async def test_can_create_access_token_successfully(
+        self,
+        app: FastAPI,
+        client: AsyncClient,
+        test_user: UserInDB,
+    ) -> None:
+        access_token = auth_service.create_access_token_for_user(
+            user=test_user,
+            secret_key=str(SECRET_KEY),
+            audience=JWT_AUDIENCE,
+            expires_in=ACCESS_TOKEN_EXPIRE_MINUTES,
+        )
+        creds = jwt.decode(access_token,
+                           str(SECRET_KEY),
+                           audience=JWT_AUDIENCE,
+                           algorithms=[JWT_ALGORITHM])
+        assert creds.get("username") is not None
+        assert creds["username"] == test_user.username
+        assert creds["aud"] == JWT_AUDIENCE
+
+    async def test_token_missing_user_is_invalid(self, app: FastAPI,
+                                                 client: AsyncClient) -> None:
+        access_token = auth_service.create_access_token_for_user(
+            user=None,
+            secret_key=str(SECRET_KEY),
+            audience=JWT_AUDIENCE,
+            expires_in=ACCESS_TOKEN_EXPIRE_MINUTES,
+        )
+        with pytest.raises(jwt.PyJWTError):
+            jwt.decode(access_token,
+                       str(SECRET_KEY),
+                       audience=JWT_AUDIENCE,
+                       algorithms=[JWT_ALGORITHM])
+
+    @pytest.mark.parametrize("secret_key, jwt_audience, exception", (
+        ("wrong-secret", JWT_AUDIENCE, jwt.InvalidSignatureError),
+        (None, JWT_AUDIENCE, jwt.InvalidSignatureError),
+        (SECRET_KEY, "othersite:auth", jwt.InvalidAudienceError),
+        (SECRET_KEY, None, ValidationError),
+    ))
+    async def test_invalid_token_content_raises_error(
+        self,
+        app: FastAPI,
+        client: AsyncClient,
+        test_user: UserInDB,
+        secret_key: Union[str, Secret],
+        jwt_audience: str,
+        exception: Type[BaseException],
+    ) -> None:
+        with pytest.raises(exception):
+            access_token = auth_service.create_access_token_for_user(
+                user=test_user,
+                secret_key=str(secret_key),
+                audience=jwt_audience,
+                expires_in=ACCESS_TOKEN_EXPIRE_MINUTES,
+            )
+            jwt.decode(
+                access_token,
+                str(SECRET_KEY),
+                audience=JWT_AUDIENCE,
+                algorithms=[JWT_ALGORITHM],
+            )
