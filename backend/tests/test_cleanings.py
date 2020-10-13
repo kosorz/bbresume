@@ -162,22 +162,46 @@ class TestUpdateCleaning:
     @pytest.mark.parametrize(
         "id, payload, status_code",
         (
-            (-1, {
-                "name": "test"
-            }, 422),
-            (0, {
-                "name": "test2"
-            }, 422),
-            (500, {
-                "name": "test3"
-            }, 404),
-            (1, None, 422),
-            (1, {
-                "cleaning_type": "invalid cleaning type"
-            }, 422),
-            (1, {
-                "cleaning_type": None
-            }, 400),
+            (
+                -1,
+                {
+                    "name": "test"
+                },
+                422,
+            ),
+            (
+                0,
+                {
+                    "name": "test2"
+                },
+                422,
+            ),
+            (
+                500,
+                {
+                    "name": "test3"
+                },
+                404,
+            ),
+            (
+                1,
+                None,
+                422,
+            ),
+            (
+                1,
+                {
+                    "cleaning_type": "invalid cleaning type"
+                },
+                422,
+            ),
+            (
+                1,
+                {
+                    "cleaning_type": None
+                },
+                400,
+            ),
         ),
     )
     async def test_update_cleaning_with_invalid_input_throws_error(
@@ -189,9 +213,13 @@ class TestUpdateCleaning:
         status_code: int,
     ) -> None:
         cleaning_update = {"cleaning_update": payload}
-        res = await client.put(app.url_path_for(
-            "cleanings:update-cleaning-by-id", id=id),
-                               json=cleaning_update)
+        res = await client.put(
+            app.url_path_for(
+                "cleanings:update-cleaning-by-id",
+                id=id,
+            ),
+            json=cleaning_update,
+        )
         assert res.status_code == status_code
 
 

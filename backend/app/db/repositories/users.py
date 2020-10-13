@@ -1,4 +1,5 @@
 from pydantic import EmailStr
+from typing import Optional
 
 from fastapi import HTTPException
 from starlette.status import HTTP_400_BAD_REQUEST
@@ -85,3 +86,22 @@ class UsersRepository(BaseRepository):
                                                values=new_user_params.dict())
 
         return UserInDB(**created_user)
+
+    async def authenticate_user(
+        self,
+        *,
+        email: EmailStr,
+        password: str,
+    ) -> Optional[UserInDB]:
+        # make user user exists in db
+        user = await self.get_user_by_email(email=email)
+        if not user:
+            return None
+        # if submitted password doesn't match
+        if not self.auth_service.verify_password(
+                password=password,
+                salt=user.salt,
+                hashed_pw=user.password,
+        ):
+            return None
+        return user
